@@ -117,7 +117,7 @@ void Cluster::init(const System *system,
 
 
     if (verbosity > 0) {
-        std::cout << "  +++ Cutoff Radii Matrix in Bohr Unit (NKD x NKD matrix) +++" << std::endl;
+        std::cout << "  +++ Cutoff Radii Matrix (NKD x NKD matrix) +++" << std::endl;
 
         for (i = 0; i < maxorder; ++i) {
             std::cout << "  " << std::setw(9) << get_ordername(i) << std::endl;
@@ -329,7 +329,7 @@ void Cluster::print_neighborlist(const size_t nat,
 
     std::cout << std::endl;
     std::cout << "  List of neighboring atoms below." << std::endl;
-    std::cout << "  Format [N th-nearest shell, distance in Bohr (Number of atoms on the shell)]"
+    std::cout << "  Format [N th-nearest shell, distance (Number of atoms on the shell)]"
         << std::endl << std::endl;
 
     std::vector<int> atomlist;
@@ -504,7 +504,6 @@ void Cluster::define(const int maxorder_in,
             }
         }
     }
-
 }
 
 int* Cluster::get_nbody_include() const
@@ -542,7 +541,7 @@ void Cluster::print_interaction_information(const size_t natmin,
                                             const std::vector<std::vector<int>> &map_p2s,
                                             const std::vector<int> &kd,
                                             const std::string *kdname,
-                                            const std::vector<int> * const *interaction_list)
+                                            const std::vector<int> *const *interaction_list) const
 {
     std::vector<int> intlist;
 

@@ -1,4 +1,5 @@
 import os
+import warnings
 from setuptools import setup, Extension
 import numpy
 try:
@@ -15,56 +16,58 @@ compile_with_sources = True
 #
 # $HOME
 # |-- ALM
-# |   |-- ALM
-# |   |   |-- include/
-# |   |   |-- lib/
-# |   |   |-- python/setup.py
-# |   |   |-- src/
-# |   |   |-- _build/
-# |   |   |-- CMakeLists.txt
-# |   |   `-- ...
-# |   `-- spglib
+# |   `-- ALM
+# |       |-- bin/
 # |       |-- include/
 # |       |-- lib/
+# |       |-- python/setup.py
+# |       |-- src/
 # |       |-- _build/
 # |       |-- CMakeLists.txt
 # |       `-- ...
+# |
 # |-- $CONDA_PREFIX/include
 # |-- $CONDA_PREFIX/include/eigen3
+# |-- $CONDA_PREFIX/lib
 # `-- ...
-
-library_dirs = []
-extra_link_args = []
-include_dirs = []
-
-spglib_dir = os.path.join(home, "ALM", "spglib", "lib")
-include_dirs_numpy = [numpy.get_include()]
-include_dirs += include_dirs_numpy
 
 if 'CONDA_PREFIX' in os.environ:
     conda_prefix = os.environ['CONDA_PREFIX']
 else:
     conda_prefix = os.path.join(home, "miniconda", "envs", "alm")
 
-# When "export CPLUS_INCLUDE_PATH=..." in documentation doesn't work,
-# the following setting can work in place of the environment variable setting.
-# include_dir_spglib = os.path.join(home, "ALM", "spglib", "include")
-# include_dirs.append(include_dir_spglib)
-# include_dir_boost = os.path.join(conda_prefix, "include")
-# include_dirs.append(include_dir_boost)
-# include_dir_eigen = os.path.join(include_dir_boost, "eigen3")
-# include_dirs.append(include_dir_eigen)
+library_dirs = []
+extra_link_args = []
+
+# OpenMP library
+if 'CC' in os.environ:
+    if 'clang' in os.environ['CC']:
+        if 'clang++' not in os.environ['CC']:
+            warnings.warn("clang++ is used instead of clang.")
+            os.environ['CC'] = os.environ['CC'].replace('clang', 'clang++')
+        extra_link_args.append('-lomp')
+    elif 'gcc' in os.environ['CC'] or 'gnu-cc' in os.environ['CC']:
+        extra_link_args.append('-lgomp')
+
+if not extra_link_args:  # Default libgomp
+    extra_link_args.append('-lgomp')
+
+# Lapack library
+extra_link_args.append('-llapack')
+
+spglib_dir = os.path.join(conda_prefix, "lib")
+include_dirs = []
+include_dirs.append(numpy.get_include())
+include_dirs.append(os.path.join(conda_prefix, "include"))
+include_dirs.append(os.path.join(conda_prefix, "include", "eigen3"))
+
 
 if compile_with_sources:
     cpp_files = ['alm.cpp',
-                 'alm_cui.cpp',
                  'cluster.cpp',
                  'constraint.cpp',
                  'fcs.cpp',
                  'files.cpp',
-                 'input_parser.cpp',
-                 'input_setter.cpp',
-                 'main.cpp',
                  'optimize.cpp',
                  'patterndisp.cpp',
                  'rref.cpp',
@@ -83,19 +86,15 @@ if compile_with_sources:
     extra_link_args.append(os.path.join(spglib_dir, "libsymspg.a"))
 else:  # compile with library
     sources = ['_alm.c', 'alm_wrapper.cpp']
-    # static link library
+    # 'libalmcxx.a' static link library has to come before depending
+    # dynamic link libraries '-lgomp', '-llapack'.
+    extra_link_args.insert(0, os.path.join("..", "lib", "libalmcxx.a"))
     extra_link_args.append(os.path.join(spglib_dir, "libsymspg.a"))
-    extra_link_args.append(os.path.join("..", "lib", "libalmcxx.a"))
-    # dynamic link library (LD_LIBRARY_PATH has to be set properly.)
-    # extra_link_args += ['-lalmcxx', '-lsymspg']
-    # library_dirs.append(os.path.join("..", "lib"))
-    # library_dirs.append(spglib_dir)
 
 extension = Extension('alm._alm',
                       include_dirs=include_dirs,
                       library_dirs=library_dirs,
-                      extra_compile_args = ['-fopenmp', '-std=c++11',
-                                            '-DWITH_SPARSE_SOLVER'],
+                      extra_compile_args=['-fopenmp', '-std=c++11'],
                       extra_link_args=extra_link_args,
                       sources=sources)
 

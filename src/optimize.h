@@ -12,16 +12,13 @@
 
 #include <vector>
 #include "files.h"
-#ifdef WITH_SPARSE_SOLVER
-#include <Eigen/SparseCore>
-using SpMat = Eigen::SparseMatrix<double, Eigen::ColMajor>;
-#endif
-
 #include "constraint.h"
 #include "symmetry.h"
 #include "fcs.h"
 #include "timer.h"
 #include <Eigen/Dense>
+#include <Eigen/SparseCore>
+using SpMat = Eigen::SparseMatrix<double, Eigen::ColMajor>;
 
 
 namespace ALM_NS
@@ -30,8 +27,9 @@ namespace ALM_NS
     {
     public:
         // General optimization options
-        int linear_model;      // 1 : least-squares, 2 : elastic net
-        int use_sparse_solver; // 0: No, 1: Yes
+        int linear_model;         // 1 : least-squares, 2 : elastic net
+        int use_sparse_solver;    // 0: No, 1: Yes
+        std::string sparsesolver; // Method name of Eigen sparse solver
         int maxnum_iteration;
         double tolerance_iteration;
         int output_frequency;
@@ -54,6 +52,7 @@ namespace ALM_NS
         {
             linear_model = 1;
             use_sparse_solver = 0;
+            sparsesolver = "SimplicialLDLT";
             maxnum_iteration = 10000;
             tolerance_iteration = 1.0e-8;
             output_frequency = 1000;
@@ -62,10 +61,10 @@ namespace ALM_NS
             debiase_after_l1opt = 0;
             cross_validation = 0;
             l1_alpha = 0.0;
-            l1_alpha_min = 1.0e-4;
-            l1_alpha_max = 1.0;
+            l1_alpha_min = -1.0;  // Recommended l1_alpha_max * 1e-6
+            l1_alpha_max = -1.0;  // Use recommended value
             l1_ratio = 1.0;
-            num_l1_alpha = 1;
+            num_l1_alpha = 100;
             save_solution_path = 0;
         }
 
@@ -82,7 +81,7 @@ namespace ALM_NS
 
         int optimize_main(const Symmetry *symmetry,
                           Constraint *constraint,
-                          const Fcs *fcs,
+                          Fcs *fcs,
                           const int maxorder,
                           const std::string file_prefix,
                           const std::vector<std::string> &str_order,
@@ -91,8 +90,8 @@ namespace ALM_NS
                           const DispForceFile &filedata_validation,
                           Timer *timer);
 
-        void set_training_data(const std::vector<std::vector<double>> &u_train_in,
-                               const std::vector<std::vector<double>> &f_train_in);
+        void set_u_train(const std::vector<std::vector<double>> &u_train_in);
+        void set_f_train(const std::vector<std::vector<double>> &f_train_in);
 
         void set_validation_data(const std::vector<std::vector<double>> &u_validation_in,
                                  const std::vector<std::vector<double>> &f_validation_in);
@@ -100,6 +99,7 @@ namespace ALM_NS
         std::vector<std::vector<double>> get_u_train() const;
         std::vector<std::vector<double>> get_f_train() const;
 
+        size_t get_number_of_data() const;
 
         void get_matrix_elements_algebraic_constraint(const int maxorder,
                                                       std::vector<double> &amat,
@@ -116,16 +116,19 @@ namespace ALM_NS
                             std::vector<size_t> *nequiv,
                             const Constraint *constraint);
 
-
         size_t get_number_of_rows_sensing_matrix() const;
+
         double* get_params() const;
 
         void set_optimizer_control(const OptimizerControl &);
         OptimizerControl get_optimizer_control() const;
 
+        double get_cv_l1_alpha() const;
+
     private:
 
         double *params;
+        double cv_l1_alpha;  // stores alpha at minimum CV
 
         std::vector<std::vector<double>> u_train, f_train;
         std::vector<std::vector<double>> u_validation, f_validation;
@@ -164,26 +167,26 @@ namespace ALM_NS
                         std::vector<double> &param_out);
 
 
-        int run_elastic_net_crossvalidation(const std::string job_prefix,
-                                            const int maxorder,
-                                            const Fcs *fcs,
-                                            const Symmetry *symmetry,
-                                            const Constraint *constraint,
-                                            const int verbosity);
+        double run_elastic_net_crossvalidation(const std::string job_prefix,
+                                               const int maxorder,
+                                               const Fcs *fcs,
+                                               const Symmetry *symmetry,
+                                               const Constraint *constraint,
+                                               const int verbosity);
 
-        void run_enetcv_manual(const std::string job_prefix,
+        double run_enetcv_manual(const std::string job_prefix,
+                                 const int maxorder,
+                                 const Fcs *fcs,
+                                 const Symmetry *symmetry,
+                                 const Constraint *constraint,
+                                 const int verbosity);
+
+        double run_enetcv_auto(const std::string job_prefix,
                                const int maxorder,
                                const Fcs *fcs,
                                const Symmetry *symmetry,
                                const Constraint *constraint,
                                const int verbosity);
-
-        void run_enetcv_auto(const std::string job_prefix,
-                             const int maxorder,
-                             const Fcs *fcs,
-                             const Symmetry *symmetry,
-                             const Constraint *constraint,
-                             const int verbosity);
 
         void write_cvresult_to_file(const std::string file_out,
                                     const std::vector<double> &alphas,
@@ -191,28 +194,38 @@ namespace ALM_NS
                                     const std::vector<double> &validation_error,
                                     const std::vector<std::vector<int>> &nonzeros) const;
 
-        int write_cvscore_to_file(const std::string file_out,
-                                  const std::vector<double> &alphas,
-                                  const std::vector<std::vector<double>> &training_error_accum,
-                                  const std::vector<std::vector<double>> &validation_error_accum) const;
+        void write_cvscore_to_file(const std::string file_out,
+                                   const std::vector<double> &alphas,
+                                   const std::vector<double> &terr_mean,
+                                   const std::vector<double> &terr_std,
+                                   const std::vector<double> &verr_mean,
+                                   const std::vector<double> &verr_std,
+                                   const int ialpha_minimum,
+                                   const size_t nsets) const;
+
+        void set_errors_of_cvscore(std::vector<double> &terr_mean,
+                                   std::vector<double> &terr_std,
+                                   std::vector<double> &verr_mean,
+                                   std::vector<double> &verr_std,
+                                   const std::vector<std::vector<double>> &training_error_accum,
+                                   const std::vector<std::vector<double>> &validation_error_accum) const;
 
         int get_ialpha_at_minimum_validation_error(const std::vector<double> &validation_error) const;
 
+        void run_elastic_net_optimization(const int maxorder,
+                                          const size_t M,
+                                          const size_t N_new,
+                                          const Fcs *fcs,
+                                          const Symmetry *symmetry,
+                                          const Constraint *constraint,
+                                          const int verbosity,
+                                          std::vector<double> &param_out) const;
 
-        int run_elastic_net_optimization(const int maxorder,
-                                         const size_t M,
-                                         const size_t N_new,
-                                         const Fcs *fcs,
-                                         const Symmetry *symmetry,
-                                         const Constraint *constraint,
-                                         const int verbosity,
-                                         std::vector<double> &param_out) const;
-
-        int run_least_squares_with_nonzero_coefs(const Eigen::MatrixXd &A_in,
-                                                 const Eigen::VectorXd &b_in,
-                                                 const Eigen::VectorXd &factor_std,
-                                                 std::vector<double> &params_inout,
-                                                 const int verbosity) const;
+        void run_least_squares_with_nonzero_coefs(const Eigen::MatrixXd &A_in,
+                                                  const Eigen::VectorXd &b_in,
+                                                  const Eigen::VectorXd &factor_std,
+                                                  std::vector<double> &params_inout,
+                                                  const int verbosity) const;
 
         void get_number_of_zero_coefs(const int maxorder,
                                       const Constraint *constraint,
@@ -229,10 +242,8 @@ namespace ALM_NS
                                 const Eigen::VectorXd &mean,
                                 const Eigen::VectorXd &dev) const;
 
-        double get_esimated_max_alpha(const Eigen::MatrixXd &Amat,
-                                      const Eigen::VectorXd &bvec,
-                                      const Eigen::VectorXd &mean,
-                                      const Eigen::VectorXd &dev) const;
+        double get_estimated_max_alpha(const Eigen::MatrixXd &Amat,
+                                       const Eigen::VectorXd &bvec) const;
 
         void apply_scaler_displacement(std::vector<std::vector<double>> &u_inout,
                                        const double normalization_factor,
@@ -253,6 +264,13 @@ namespace ALM_NS
         void finalize_scalers(const int maxorder,
                               Constraint *constraint);
 
+        void apply_basis_converter(std::vector<std::vector<double>> &u_multi,
+                                   Eigen::Matrix3d cmat) const;
+
+        void apply_basis_converter_amat(const int natmin3,
+                                        const int ncols,
+                                        double **amat_orig_tmp,
+                                        Eigen::Matrix3d cmat) const;
 
         int fit_without_constraints(const size_t N,
                                     const size_t M,
@@ -291,7 +309,6 @@ namespace ALM_NS
                                  const Symmetry *,
                                  const Fcs *) const;
 
-#ifdef WITH_SPARSE_SOLVER
         void get_matrix_elements_in_sparse_form(const int maxorder,
                                                 SpMat &sp_amat,
                                                 Eigen::VectorXd &sp_bvec,
@@ -302,15 +319,15 @@ namespace ALM_NS
                                                 const Fcs *fcs,
                                                 const Constraint *constraint) const;
 
-        int run_eigen_sparseQR(const SpMat &,
-                               const Eigen::VectorXd &,
-                               std::vector<double> &,
-                               const double,
-                               const int,
-                               const Fcs *,
-                               const Constraint *,
-                               const int) const;
-#endif
+        int run_eigen_sparse_solver(const SpMat &sp_mat,
+                                    const Eigen::VectorXd &sp_bvec,
+                                    std::vector<double> &param_out,
+                                    const double fnorm,
+                                    const int maxorder,
+                                    const Fcs *fcs,
+                                    const Constraint *constraint,
+                                    const std::string solver_type,
+                                    const int verbosity) const;
 
         void recover_original_forceconstants(const int maxorder,
                                              const std::vector<double> &param_in,
@@ -357,7 +374,10 @@ namespace ALM_NS
                                     std::vector<double> &validation_error,
                                     std::vector<std::vector<int>> &nonzeros) const;
 
-        void compute_alphas(std::vector<double> &alphas) const;
+        void compute_alphas(const double l1_alpha_max,
+                            const double l1_alpha_min,
+                            const int num_l1_alpha,
+                            std::vector<double> &alphas) const;
     };
 
     inline double shrink(const double x,
